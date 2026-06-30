@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 學習助手</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- Markdown 渲染（讓回覆的程式碼與條列更好讀） -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <h1 class="title">AI 學習助手</h1>
+        <div class="settings">
+          <label for="api-url">後端位址</label>
+          <input id="api-url" type="text" value="" placeholder="同源模式（預設）" spellcheck="false" />
+        </div>
+      </div>
+    </header>
+
+    <main id="chat" class="chat">
+      <div class="welcome">
+        <div class="welcome-emoji">🧭</div>
+        <h2>開始測試你的提示詞</h2>
+        <p>直接在下方輸入問題，回覆會以聊天泡泡呈現，比 /docs 直觀多了。</p>
+      </div>
+    </main>
+
+    <footer class="composer">
+      <div class="composer-inner">
+        <textarea
+          id="input"
+          rows="1"
+          placeholder="輸入訊息…（Enter 送出，Shift + Enter 換行）"
+        ></textarea>
+        <button id="send" type="button" aria-label="送出">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2z" />
+          </svg>
+        </button>
+      </div>
+      <p class="hint">提示詞效果測試介面 · FastAPI 同源提供前端與 API</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

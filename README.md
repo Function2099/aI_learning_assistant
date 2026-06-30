@@ -5,25 +5,31 @@
 ## 目前進度
 
 - [x] Day 1：FastAPI 基礎端點
-- [ ] Day 2：串接 Groq LLM API
+- [x] Day 2：串接 Groq LLM API
 - [ ] Day 3：System Prompt 設定
 - [ ] Day 4：Streaming SSE
-- [ ] Day 5：前端介面
+- [x] Day 5：前端介面（ChatGPT 風格聊天 UI）
 
 ## 快速啟動
 
+FastAPI 同時提供前端靜態檔案與 API，只需啟動一個伺服器。
+
 ```bash
-# 1. 安裝 uv（第一次）
+# 安裝 uv（第一次）
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. 建立虛擬環境 + 安裝依賴
+# 建立虛擬環境 + 安裝依賴
 uv sync
 
-# 3. 啟動伺服器
+# 啟動伺服器
 uv run uvicorn main:app --reload
 ```
 
-伺服器啟動後開啟：http://localhost:8000
+啟動後瀏覽器開啟：http://localhost:8000
+
+- 聊天介面：`/`
+- API 文件：`/docs`
+- 健康檢查：`/health`
 
 ## 技術架構
 
@@ -31,11 +37,11 @@ uv run uvicorn main:app --reload
 使用者
   │
   ▼
-FastAPI (Python)     ← 你現在在這裡
+FastAPI (Python)     ← API + 前端靜態檔案
   │
   ▼
-Groq API             ← Day 2 加入
-(llama-3.3-70b)
+Groq API
+(qwen/qwen3-32b)
 ```
 
 ## 測試 API
