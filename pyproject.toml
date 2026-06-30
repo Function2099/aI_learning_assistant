@@ -1,0 +1,13 @@
+[project]
+name = "ai-learning-assistant"
+version = "0.2.0"
+description = "AI 開發學習助手 - 用 FastAPI + Groq 打造的個人 AI 導師"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    # Day 2 會用到：
+    "openai>=1.0.0",
+]

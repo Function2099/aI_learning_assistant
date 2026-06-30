@@ -1,0 +1,18 @@
+# 環境變數（絕對不能 commit！）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.python-version
+
+# uv
+.uv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
