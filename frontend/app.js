@@ -90,7 +90,7 @@ async function sendMessage() {
   showTyping();
 
   try {
-    const res = await fetch(`${baseUrl}/chat`, {
+    const res = await fetch(`${baseUrl}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
@@ -103,17 +103,38 @@ async function sendMessage() {
       return;
     }
 
-    const data = await res.json();
-    const reply = data.reply ?? "（沒有收到回覆內容）";
-    const rendered = marked.parse(reply);
-    addMessage("assistant", rendered, true);
+    // 先建一個空泡泡，之後逐字填入
+    const bubble = addMessage("assistant", "");
+    let fullText = "";
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const lines = decoder.decode(value).split("\n");
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6);
+        if (data === "[DONE]") break;
+
+        try {
+          fullText += JSON.parse(data);
+          // 用 marked 把 markdown 渲染成 HTML，跟原本一樣
+          bubble.innerHTML = marked.parse(fullText);
+          scrollToBottom();
+        } catch {}
+      }
+    }
   } catch (err) {
     removeTyping();
     addMessage(
       "assistant",
       `⚠️ 連線失敗：請確認後端已啟動，且位址正確（目前：${baseUrl}）。\n\n${err.message}`
     );
-  } finally {
+  }finally {
     setBusy(false);
     inputEl.focus();
   }

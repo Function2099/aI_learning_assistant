@@ -1,6 +1,8 @@
+import json
 import os
 import re
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from openai import OpenAI
@@ -85,6 +87,22 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
 
+THINK_OPEN = "<think>"
+THINK_CLOSE = "</think>"
+
+
+def strip_thinking(text: str) -> str:
+    return re.sub(
+        rf"{re.escape(THINK_OPEN)}.*?{re.escape(THINK_CLOSE)}",
+        "",
+        text,
+        flags=re.DOTALL,
+    ).strip()
+
+
+def _could_be_think_open_prefix(buf: str) -> bool:
+    return THINK_OPEN.startswith(buf) and len(buf) < len(THINK_OPEN)
+
 @app.get("/health")
 def health():
     return {"status":"ok", "message": "AI 學習助手啟動中"}
@@ -101,10 +119,84 @@ def chat(req: ChatRequest):
         ],
     )
 
-    reply = completion.choices[0].message.content
-    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+    reply = strip_thinking(completion.choices[0].message.content)
     return ChatResponse(reply=reply)
 
+
+# Streaming端點
+# 原理：用 generator 函示，每收到一個 token 就 yield 出去
+# 前端用 EventSource 接收，字就會一個一個跑出來
+async def stream_generator(message: str):
+    pending = ""       # 暫存 token，用來偵測 <think> 開頭
+    in_think = False   # 現在是否在 <think> 區塊內
+    past_think = False # <think> 已結束，或確認模型不會輸出思考過程
+
+    with client.chat.completions.stream(
+        model="qwen/qwen3-32b",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": message},
+        ],
+    ) as stream:
+        for event in stream:
+            if event.type != "content.delta":
+                continue
+            text = event.delta
+
+            if past_think:
+                yield f"data: {json.dumps(text, ensure_ascii=False)}\n\n"
+                continue
+
+            if in_think:
+                pending += text
+                if THINK_CLOSE in pending:
+                    in_think = False
+                    past_think = True
+                    after_think = pending.split(THINK_CLOSE, 1)[1]
+                    pending = ""
+                    if after_think:
+                        yield f"data: {json.dumps(after_think, ensure_ascii=False)}\n\n"
+                continue
+
+            pending += text
+
+            if THINK_OPEN in pending:
+                in_think = True
+                pending = pending.split(THINK_OPEN, 1)[1]
+                if THINK_CLOSE in pending:
+                    in_think = False
+                    think_done = True
+                    # 把 </think> 後面的內容取出來送出
+                    after_think = think_buffer.split("</think>", 1)[1]
+                    if after_think.strip():
+                        yield f"data: {json.dumps(after_think, ensure_ascii=False)}\n\n"
+                continue
+
+            # 開頭可能是 <think> 的前綴（例如先收到 "<"），先繼續緩衝
+            if _could_be_think_open_prefix(pending):
+                continue
+
+            # 確認沒有思考區塊，把已緩衝的內容一次送出
+            past_think = True
+            to_send = pending
+            pending = ""
+            if to_send:
+                yield f"data: {json.dumps(to_send, ensure_ascii=False)}\n\n"
+
+    # 送出結束訊號，讓前端知道 stream 完成了
+    yield "data: [DONE]\n\n"
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    return StreamingResponse(
+        stream_generator(req.message),
+        media_type="text/event-stream",
+        headers={
+            # 關掉 Nginx 的緩衝，確保 token 即時到達前端
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
 
 # 由 FastAPI 提供前端靜態檔案，讓前後端共用同一個來源。
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
