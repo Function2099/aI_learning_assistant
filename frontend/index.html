@@ -10,39 +10,105 @@
 </head>
 <body>
   <div class="app">
-    <header class="topbar">
-      <div class="topbar-inner">
-        <h1 class="title">AI 學習助手</h1>
-        <div class="settings">
-          <label for="api-url">後端位址</label>
-          <input id="api-url" type="text" value="" placeholder="同源模式（預設）" spellcheck="false" />
+    <div class="main-column">
+      <header class="topbar">
+        <div class="topbar-inner">
+          <h1 class="title">AI 學習助手</h1>
+          <div class="topbar-actions">
+            <button
+              id="sidebar-toggle-top"
+              type="button"
+              class="sidebar-toggle-top"
+              aria-label="開啟設定"
+              aria-expanded="true"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                <path d="M3 17h18v-2H3v2zm0-5h18V10H3v2zm0-7v2h18V5H3z" />
+              </svg>
+            </button>
+            <div class="settings">
+            <label for="api-url">後端位址</label>
+            <input id="api-url" type="text" value="" placeholder="同源模式（預設）" spellcheck="false" />
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main id="chat" class="chat">
+        <div class="welcome">
+          <div class="welcome-emoji">🧭</div>
+          <h2>開始測試你的提示詞</h2>
+          <p>直接在下方輸入問題，回覆會以聊天泡泡呈現，比 /docs 直觀多了。</p>
+        </div>
+      </main>
+
+      <footer class="composer">
+        <div class="composer-inner">
+          <textarea
+            id="input"
+            rows="1"
+            placeholder="輸入訊息…（Enter 送出，Shift + Enter 換行）"
+          ></textarea>
+          <button id="send" type="button" aria-label="送出">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2z" />
+            </svg>
+          </button>
+        </div>
+        <p class="hint">提示詞效果測試介面 · FastAPI 同源提供前端與 API</p>
+      </footer>
+    </div>
+
+    <aside class="sidebar" id="sidebar">
+      <button
+        id="sidebar-toggle"
+        type="button"
+        class="sidebar-toggle"
+        aria-label="收合設定"
+        aria-expanded="true"
+      >
+        <svg class="icon-collapse" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+          <path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
+        </svg>
+        <svg class="icon-expand" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+          <path d="M14 6 15.41 7.41 10.83 12l4.58 4.59L14 18l-6-6z" />
+        </svg>
+      </button>
+      <div class="sidebar-inner">
+      <h2 class="sidebar-title">設定</h2>
+
+      <div class="control-row">
+        <label for="temperature">Temperature</label>
+        <div class="control-input">
+          <input id="temperature" type="range" min="0" max="2" step="0.1" value="1" />
+          <span id="temperature-value" class="value">1.0</span>
         </div>
       </div>
-    </header>
 
-    <main id="chat" class="chat">
-      <div class="welcome">
-        <div class="welcome-emoji">🧭</div>
-        <h2>開始測試你的提示詞</h2>
-        <p>直接在下方輸入問題，回覆會以聊天泡泡呈現，比 /docs 直觀多了。</p>
+      <div class="control-row">
+        <label for="max-tokens">Max tokens</label>
+        <input id="max-tokens" type="number" min="1" max="8192" value="1024" />
       </div>
-    </main>
 
-    <footer class="composer">
-      <div class="composer-inner">
-        <textarea
-          id="input"
-          rows="1"
-          placeholder="輸入訊息…（Enter 送出，Shift + Enter 換行）"
-        ></textarea>
-        <button id="send" type="button" aria-label="送出">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-            <path d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2z" />
-          </svg>
-        </button>
+      <div class="control-row">
+        <label for="max-history-turns">歷史輪數</label>
+        <div class="control-input">
+          <input id="max-history-turns" type="range" min="0" max="20" step="1" value="5" />
+          <span id="max-history-turns-value" class="value">5</span>
+        </div>
       </div>
-      <p class="hint">提示詞效果測試介面 · FastAPI 同源提供前端與 API</p>
-    </footer>
+
+      <div class="control-row">
+        <label for="top-p">Top P</label>
+        <div class="control-input">
+          <input id="top-p" type="range" min="0" max="1" step="0.05" value="1" />
+          <span id="top-p-value" class="value">1.0</span>
+        </div>
+      </div>
+
+      <button id="clear-chat" type="button" class="clear-btn">清除對話</button>
+      </div>
+    </aside>
   </div>
 
   <script src="app.js"></script>

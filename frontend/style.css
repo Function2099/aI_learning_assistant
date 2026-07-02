@@ -30,8 +30,15 @@ body {
 
 .app {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100vh;
+}
+
+.main-column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 頂部列 */
@@ -62,6 +69,36 @@ body {
   gap: 8px;
   font-size: 12px;
   color: var(--text-soft);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sidebar-toggle-top {
+  display: none;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text-soft);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.sidebar-toggle-top:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.app.sidebar-collapsed .sidebar-toggle-top {
+  display: flex;
 }
 
 .settings input {
@@ -290,4 +327,153 @@ body {
   text-align: center;
   font-size: 11px;
   color: var(--text-soft);
+}
+
+/* 右側設定欄 */
+.sidebar {
+  --sidebar-width: 270px;
+  position: relative;
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  overflow: visible;
+  transition: width 0.25s ease, border-color 0.25s ease;
+}
+
+.sidebar.collapsed {
+  width: 0;
+  border-left-color: transparent;
+}
+
+.sidebar-inner {
+  width: var(--sidebar-width);
+  height: 100%;
+  padding: 20px 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+.sidebar.collapsed .sidebar-inner {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-toggle {
+  position: absolute;
+  left: -28px;
+  top: 16px;
+  z-index: 10;
+  width: 28px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--panel);
+  color: var(--text-soft);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow);
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.sidebar-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.sidebar-toggle .icon-expand {
+  display: none;
+}
+
+.sidebar.collapsed .sidebar-toggle {
+  left: -28px;
+  border-right: 1px solid var(--border);
+  border-radius: 8px 0 0 8px;
+}
+
+.sidebar.collapsed .sidebar-toggle .icon-collapse {
+  display: none;
+}
+
+.sidebar.collapsed .sidebar-toggle .icon-expand {
+  display: block;
+}
+
+.sidebar-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 20px;
+}
+
+.control-row {
+  margin-bottom: 18px;
+}
+
+.control-row label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-soft);
+  margin-bottom: 6px;
+}
+
+.control-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.control-input input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.control-row input[type="number"] {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+}
+
+.control-row input[type="number"]:focus {
+  border-color: var(--accent);
+}
+
+.value {
+  font-size: 12px;
+  color: var(--text);
+  min-width: 28px;
+  text-align: right;
+}
+
+.clear-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.clear-btn:hover {
+  background: var(--bg);
+  border-color: var(--accent);
+}
+
+.clear-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

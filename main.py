@@ -1,15 +1,17 @@
-import json
 import os
 import re
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+import json
+import uuid
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from openai import OpenAI
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from openai import APIStatusError, OpenAI
 from dotenv import load_dotenv
 
 # 讀取.env環境變數
 load_dotenv()
+
 app = FastAPI(title="AI 學習助手", version="0.2.0")
 
 client = OpenAI(
@@ -17,7 +19,7 @@ client = OpenAI(
     api_key=os.environ.get("GROQ_API_KEY"),
 )
 
-# 系統提示詞 : 先放基礎版本
+# 系統提示詞
 SYSTEM_PROMPT = """你是一個 AI 工程師學習助手，協助使用者學習 AI 開發。
 
 【使用者背景】
@@ -78,14 +80,141 @@ FastAPI 基礎 → LLM API 串接 → Streaming → LangChain → LangGraph → 
 如果問題只是「部分」偏題（例如先聊到生活瑣事再問技術問題），
 只針對技術相關的部分回答，其餘部分不予回應。
 """
+# Groq on_demand 單次請求 token 上限（輸入 + max_tokens 合計）
+GROQ_REQUEST_TOKEN_LIMIT = 6000
+REQUEST_TOKEN_MARGIN = 300
+
+# 對話歷史儲存區
+conversation_history: dict[str, list[dict]] = {}
 
 # 定義請求的資料格式(DTO)
+class ChatSettings(BaseModel):
+    temperature: float = Field(default=1.0, ge=0, le=2)
+    max_tokens: int = Field(default=1024, ge=1, le=8192)
+    max_history_turns: int = Field(default=5, ge=0, le=20)
+    top_p: float = Field(default=1.0, ge=0, le=1)
+
+
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = ""
+    settings: ChatSettings | None = None
+
 
 # 定義回應的資料格式
 class ChatResponse(BaseModel):
     reply: str
+    session_id: str
+
+
+def resolve_settings(req: ChatRequest) -> ChatSettings:
+    """req.settings 為 None 時回傳預設值"""
+    return req.settings or ChatSettings()
+
+
+def get_history(session_id: str, max_history_turns: int | None = None) -> list[dict]:
+    """取得指定 session 的對話歷史，不存在就回傳空陣列"""
+    history = conversation_history.get(session_id, [])
+    if max_history_turns is not None:
+        max_messages = max_history_turns * 2
+        return history[-max_messages:] if max_messages > 0 else []
+    return history
+
+
+def save_to_history(
+    session_id: str,
+    user_msg: str,
+    assistant_msg: str,
+    max_history_turns: int,
+):
+    """把這一輪對話存進歷史，並截斷超過上限的部分"""
+    if session_id not in conversation_history:
+        conversation_history[session_id] = []
+
+    history = conversation_history[session_id]
+    history.append({"role": "user", "content": user_msg})
+    history.append({"role": "assistant", "content": assistant_msg})
+
+    # 超過上限就從最舊的一輪開始刪（一輪 = 2 筆：user + assistant）
+    max_messages = max_history_turns * 2
+    if max_messages == 0:
+        conversation_history[session_id] = []
+    elif len(history) > max_messages:
+        conversation_history[session_id] = history[-max_messages:]
+
+
+def build_messages(
+    session_id: str,
+    user_msg: str,
+    max_history_turns: int,
+) -> list[dict]:
+    """組出要送給 Groq 的完整 messages 陣列"""
+    history = get_history(session_id, max_history_turns)
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *history,
+        {"role": "user", "content": user_msg},
+    ]
+
+
+def estimate_tokens(text: str) -> int:
+    """粗略估算 token 數（繁中為主時偏保守）"""
+    if not text:
+        return 0
+    return max(1, (len(text) + 1) // 2)
+
+
+def estimate_messages_tokens(messages: list[dict]) -> int:
+    return sum(estimate_tokens(m.get("content", "")) for m in messages)
+
+
+def fit_request_to_budget(
+    messages: list[dict],
+    requested_max_tokens: int,
+    token_limit: int = GROQ_REQUEST_TOKEN_LIMIT - REQUEST_TOKEN_MARGIN,
+) -> tuple[list[dict], int]:
+    """裁切歷史並調整 max_tokens，使請求不超過 API 上限。"""
+    if len(messages) < 2:
+        return messages, requested_max_tokens
+
+    system = messages[0]
+    user = messages[-1]
+    history = list(messages[1:-1])
+    min_output_tokens = 256
+
+    def total_tokens(history_msgs: list[dict], max_out: int) -> int:
+        return estimate_messages_tokens([system, *history_msgs, user]) + max_out
+
+    while history and total_tokens(history, requested_max_tokens) > token_limit:
+        history = history[2:] if len(history) >= 2 else history[1:]
+
+    input_tokens = estimate_messages_tokens([system, *history, user])
+    effective_max_tokens = min(
+        requested_max_tokens,
+        max(min_output_tokens, token_limit - input_tokens),
+    )
+
+    while history and total_tokens(history, effective_max_tokens) > token_limit:
+        history = history[2:] if len(history) >= 2 else history[1:]
+        input_tokens = estimate_messages_tokens([system, *history, user])
+        effective_max_tokens = min(
+            requested_max_tokens,
+            max(min_output_tokens, token_limit - input_tokens),
+        )
+
+    return [system, *history, user], effective_max_tokens
+
+
+def friendly_api_error(exc: APIStatusError) -> str:
+    body = exc.body if isinstance(exc.body, dict) else {}
+    err = body.get("error", {}) if isinstance(body.get("error"), dict) else {}
+    message = err.get("message") or str(exc)
+    if "reduce your message size" in message.lower() or err.get("code") == "rate_limit_exceeded":
+        return (
+            "請求內容過大，已超出 Groq 免費方案單次 token 上限（6000）。"
+            "請清除對話、減少歷史輪數，或降低 Max tokens 後再試。"
+        )
+    return f"API 錯誤（{exc.status_code}）：{message}"
 
 THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
@@ -105,98 +234,95 @@ def _could_be_think_open_prefix(buf: str) -> bool:
 
 @app.get("/health")
 def health():
-    return {"status":"ok", "message": "AI 學習助手啟動中"}
+    return {"status":"ok", "version": "0.5.0"}
 
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    # 呼叫 Groq API ，啟用 LLM 回答問題
-    completion = client.chat.completions.create(
-        model="qwen/qwen3-32b",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": req.message},
-        ],
-    )
+    session_id = req.session_id or str(uuid.uuid4())
+    settings = resolve_settings(req)
+    messages = build_messages(session_id, req.message, settings.max_history_turns)
+    messages, max_tokens = fit_request_to_budget(messages, settings.max_tokens)
 
-    reply = strip_thinking(completion.choices[0].message.content)
-    return ChatResponse(reply=reply)
+    try:
+        completion = client.chat.completions.create(
+            model="qwen/qwen3-32b",
+            messages=messages,
+            temperature=settings.temperature,
+            max_tokens=max_tokens,
+            top_p=settings.top_p,
+            extra_body={"reasoning_format": "hidden"},
+        )
+    except APIStatusError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=friendly_api_error(exc)) from exc
+    reply = completion.choices[0].message.content
+    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+
+    save_to_history(session_id, req.message, reply, settings.max_history_turns)
+    return ChatResponse(reply=reply, session_id=session_id)
 
 
 # Streaming端點
-# 原理：用 generator 函示，每收到一個 token 就 yield 出去
-# 前端用 EventSource 接收，字就會一個一個跑出來
-async def stream_generator(message: str):
-    pending = ""       # 暫存 token，用來偵測 <think> 開頭
-    in_think = False   # 現在是否在 <think> 區塊內
-    past_think = False # <think> 已結束，或確認模型不會輸出思考過程
+async def stream_generator(session_id: str, user_msg: str, settings: ChatSettings):
+    messages = build_messages(session_id, user_msg, settings.max_history_turns)
+    messages, max_tokens = fit_request_to_budget(messages, settings.max_tokens)
+    full_reply = ""         # 累積完整回應，stream 結束後存進歷史
 
-    with client.chat.completions.stream(
-        model="qwen/qwen3-32b",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": message},
-        ],
-    ) as stream:
-        for event in stream:
-            if event.type != "content.delta":
-                continue
-            text = event.delta
+    try:
+        with client.chat.completions.stream(
+            model="qwen/qwen3-32b",
+            messages=messages,
+            temperature=settings.temperature,
+            max_tokens=max_tokens,
+            top_p=settings.top_p,
+            extra_body={"reasoning_format": "hidden"},
+        ) as stream:
+            for event in stream:
+                # OpenAI SDK v1+ 串流事件為 ContentDeltaEvent，內容在 event.delta
+                if getattr(event, "type", None) != "content.delta":
+                    continue
+                delta = event.delta or ""
+                if not delta:
+                    continue
 
-            if past_think:
-                yield f"data: {json.dumps(text, ensure_ascii=False)}\n\n"
-                continue
+                full_reply += delta
+                yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n"
+    except APIStatusError as exc:
+        yield f"data: {json.dumps({'error': friendly_api_error(exc)}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+        return
 
-            if in_think:
-                pending += text
-                if THINK_CLOSE in pending:
-                    in_think = False
-                    past_think = True
-                    after_think = pending.split(THINK_CLOSE, 1)[1]
-                    pending = ""
-                    if after_think:
-                        yield f"data: {json.dumps(after_think, ensure_ascii=False)}\n\n"
-                continue
+    # stream 結束後，把完整回應存進歷史
+    if full_reply:
+        save_to_history(session_id, user_msg, full_reply, settings.max_history_turns)
 
-            pending += text
-
-            if THINK_OPEN in pending:
-                in_think = True
-                pending = pending.split(THINK_OPEN, 1)[1]
-                if THINK_CLOSE in pending:
-                    in_think = False
-                    think_done = True
-                    # 把 </think> 後面的內容取出來送出
-                    after_think = think_buffer.split("</think>", 1)[1]
-                    if after_think.strip():
-                        yield f"data: {json.dumps(after_think, ensure_ascii=False)}\n\n"
-                continue
-
-            # 開頭可能是 <think> 的前綴（例如先收到 "<"），先繼續緩衝
-            if _could_be_think_open_prefix(pending):
-                continue
-
-            # 確認沒有思考區塊，把已緩衝的內容一次送出
-            past_think = True
-            to_send = pending
-            pending = ""
-            if to_send:
-                yield f"data: {json.dumps(to_send, ensure_ascii=False)}\n\n"
-
-    # 送出結束訊號，讓前端知道 stream 完成了
-    yield "data: [DONE]\n\n"
+    # 把 session_id 一起送給前端（前端第一次對話需要拿到這個值）
+    yield f"data: {json.dumps({'done': True, 'session_id': session_id}, ensure_ascii=False)}\n\n"
 
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
+    session_id = req.session_id or str(uuid.uuid4())
+    settings = resolve_settings(req)
     return StreamingResponse(
-        stream_generator(req.message),
+        stream_generator(session_id, req.message, settings),
         media_type="text/event-stream",
-        headers={
-            # 關掉 Nginx 的緩衝，確保 token 即時到達前端
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache",
-        },
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
     )
+
+@app.delete("/session/{session_id}")
+def clear_session(session_id: str):
+    """清除指定 session 的對話歷史（前端「清除對話」按鈕用）"""
+    if session_id in conversation_history:
+        del conversation_history[session_id]
+    return {"status": "cleared", "session_id": session_id}
+
+@app.get("/session/{session_id}/history")
+def get_session_history(session_id: str):
+    """查看某個 session 的對話歷史（除錯用）"""
+    history = get_history(session_id)
+    if not history:
+        raise HTTPException(status_code=404, detail="Session 不存在或沒有歷史")
+    return {"session_id": session_id, "turns": len(history) // 2, "history": history}
 
 # 由 FastAPI 提供前端靜態檔案，讓前後端共用同一個來源。
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
