@@ -1,0 +1,78 @@
+{
+  "current_phase": 2,
+  "current_week": 2,
+  "items": [
+    {
+      "id": "fastapi_basics",
+      "title": "FastAPI 基礎（REST API、CRUD）",
+      "phase": 1,
+      "completed": true
+    },
+    {
+      "id": "pydantic",
+      "title": "Pydantic 資料驗證",
+      "phase": 1,
+      "completed": true
+    },
+    {
+      "id": "async_await",
+      "title": "async / await",
+      "phase": 1,
+      "completed": false
+    },
+    {
+      "id": "uv_package",
+      "title": "uv 套件管理",
+      "phase": 1,
+      "completed": true
+    },
+    {
+      "id": "pytest",
+      "title": "pytest 測試",
+      "phase": 1,
+      "completed": true
+    },
+    {
+      "id": "git_advanced",
+      "title": "Git branch/merge/rebase",
+      "phase": 1,
+      "completed": false
+    },
+    {
+      "id": "llm_api",
+      "title": "串接 LLM API",
+      "phase": 2,
+      "completed": true
+    },
+    {
+      "id": "streaming",
+      "title": "Streaming SSE",
+      "phase": 2,
+      "completed": true
+    },
+    {
+      "id": "system_prompt",
+      "title": "System Prompt 設計與邊界測試",
+      "phase": 2,
+      "completed": true
+    },
+    {
+      "id": "frontend",
+      "title": "前端聊天介面",
+      "phase": 2,
+      "completed": true
+    },
+    {
+      "id": "session_management",
+      "title": "對話 Session 管理",
+      "phase": 2,
+      "completed": true
+    },
+    {
+      "id": "dynamic_progress",
+      "title": "動態學習進度",
+      "phase": 2,
+      "completed": false
+    }
+  ]
+}

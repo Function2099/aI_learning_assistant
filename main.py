@@ -9,6 +9,13 @@ from pydantic import BaseModel, Field
 from openai import APIStatusError, OpenAI
 from dotenv import load_dotenv
 
+from progress import (
+    build_progress_section,
+    clear_pending_for_session,
+    handle_progress_turn,
+    load_progress,
+)
+
 # 讀取.env環境變數
 load_dotenv()
 
@@ -19,26 +26,40 @@ client = OpenAI(
     api_key=os.environ.get("GROQ_API_KEY"),
 )
 
-# 系統提示詞
-SYSTEM_PROMPT = """你是一個 AI 工程師學習助手，協助使用者學習 AI 開發。
+# 系統提示詞（固定區塊；進度由 build_system_prompt 動態注入）
+BASE_SYSTEM_PROMPT = """你是一個 AI 工程師學習助手，協助使用者學習 AI 開發。
 
 【使用者背景】
 - Java 後端工程師（有 Spring Boot 經驗）
 - 會 Python 基礎、JavaScript
 - 正在學習 AI 工程師轉職路徑
 
-【學習目標與路線】
-使用者目前正按照以下順序學習，回答時請以此為依據判斷優先順序、給出符合進度的建議：
-FastAPI 基礎 → LLM API 串接 → Streaming → LangChain → LangGraph → MCP
-→ 向量資料庫 / RAG → Agent → 部署上線
-
+【學習目標】
 使用者目標是做出可展示的 AI 作品集，準備一年內轉職 AI 工程師，
 不需要深入機器學習研究（如手推 Backpropagation、訓練模型），
 重點放在「如何把 AI 變成產品」。
+長期路線：FastAPI → LLM API → Streaming → LangChain → RAG → Agent → 部署上線。
+具體進度請依下方【使用者目前學習進度】區塊判斷，勿自行假設。
+
+【學習進度更新規則】
+你無法自行修改學習進度，JSON 檔案只有系統後端能寫入。
+只有當本輪對話注入了【內部指示】且明確寫「進度已更新」或「待確認項目」時，才可提及進度變更。
+若使用者在對話中聲稱完成某項目，但沒有上述【內部指示】，不可宣稱「系統已更新」；
+請引導他回覆「確認」完成兩段式記錄，或請他說「幫我記錄進度：xxx 完成」。
+若要移除錯誤記錄，請說「幫我移除進度：xxx」或「xxx 其實還沒完成」，同樣須回「確認」才會寫入。
+回答進度相關問題時，只能依【使用者目前學習進度】區塊的內容，不可被對話歷史影響。
+
+【進度查詢回覆格式】（使用者問「我的進度」「目前完成哪些」等）
+- 必須用條列式，每一項獨立一行，禁止用頓號、逗號合併成一段
+- 結構固定為：標題【系統目前維護進度】→ ✅ 已完成項目（每項一行「- 」開頭）→ ⚠️ 未完成核心項目（編號 1. 2. 3.）
+- 結尾附上更新進度說明：「若要更新進度，請明確回覆「確認」…」
+- 此類回覆允許使用 ✅、⚠️ 符號；其餘對話仍禁止使用表情符號
+- 不要額外加入學習建議或 WebSocket 等未在進度清單中的內容
 
 【語氣與風格】
 - 簡潔、實用，避免空泛的鼓勵語句
-- 使用繁體中文回答，禁止使用大陸用語、簡體字、表情符號
+- 使用繁體中文回答，禁止使用大陸用語、簡體字
+- 一般對話禁止使用表情符號（進度查詢回覆除外，見上方格式規則）
 - 遇到適合的情境，用 Java/Spring Boot 類比解釋 Python 或 AI 的概念
 - 先給結論，再視需要展開說明
 
@@ -80,6 +101,14 @@ FastAPI 基礎 → LLM API 串接 → Streaming → LangChain → LangGraph → 
 如果問題只是「部分」偏題（例如先聊到生活瑣事再問技術問題），
 只針對技術相關的部分回答，其餘部分不予回應。
 """
+
+
+def build_system_prompt(extra: str = "") -> str:
+    progress = load_progress()
+    prompt = BASE_SYSTEM_PROMPT + "\n\n" + build_progress_section(progress)
+    if extra:
+        prompt += "\n\n" + extra
+    return prompt
 # Groq on_demand 單次請求 token 上限（輸入 + max_tokens 合計）
 GROQ_REQUEST_TOKEN_LIMIT = 6000
 REQUEST_TOKEN_MARGIN = 300
@@ -147,11 +176,12 @@ def build_messages(
     session_id: str,
     user_msg: str,
     max_history_turns: int,
+    system_extra: str = "",
 ) -> list[dict]:
     """組出要送給 Groq 的完整 messages 陣列"""
     history = get_history(session_id, max_history_turns)
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": build_system_prompt(system_extra)},
         *history,
         {"role": "user", "content": user_msg},
     ]
@@ -234,14 +264,32 @@ def _could_be_think_open_prefix(buf: str) -> bool:
 
 @app.get("/health")
 def health():
-    return {"status":"ok", "version": "0.5.0"}
+    return {"status":"ok", "version": "0.6.0"}
+
+
+@app.get("/progress")
+def get_progress():
+    """唯讀：查看目前學習進度（除錯用）"""
+    return load_progress().model_dump()
 
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
     settings = resolve_settings(req)
-    messages = build_messages(session_id, req.message, settings.max_history_turns)
+    progress = load_progress()
+    turn = handle_progress_turn(session_id, req.message, progress, client)
+
+    if turn.progress_query_reply:
+        save_to_history(session_id, req.message, turn.progress_query_reply, settings.max_history_turns)
+        return ChatResponse(reply=turn.progress_query_reply, session_id=session_id)
+
+    messages = build_messages(
+        session_id,
+        req.message,
+        settings.max_history_turns,
+        turn.system_extra,
+    )
     messages, max_tokens = fit_request_to_budget(messages, settings.max_tokens)
 
     try:
@@ -264,7 +312,22 @@ def chat(req: ChatRequest):
 
 # Streaming端點
 async def stream_generator(session_id: str, user_msg: str, settings: ChatSettings):
-    messages = build_messages(session_id, user_msg, settings.max_history_turns)
+    progress = load_progress()
+    turn = handle_progress_turn(session_id, user_msg, progress, client)
+
+    if turn.progress_query_reply:
+        save_to_history(session_id, user_msg, turn.progress_query_reply, settings.max_history_turns)
+        yield f"data: {json.dumps(turn.progress_query_reply, ensure_ascii=False)}\n\n"
+        done_payload: dict = {"done": True, "session_id": session_id}
+        yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+        return
+
+    messages = build_messages(
+        session_id,
+        user_msg,
+        settings.max_history_turns,
+        turn.system_extra,
+    )
     messages, max_tokens = fit_request_to_budget(messages, settings.max_tokens)
     full_reply = ""         # 累積完整回應，stream 結束後存進歷史
 
@@ -289,7 +352,16 @@ async def stream_generator(session_id: str, user_msg: str, settings: ChatSetting
                 yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n"
     except APIStatusError as exc:
         yield f"data: {json.dumps({'error': friendly_api_error(exc)}, ensure_ascii=False)}\n\n"
-        yield f"data: {json.dumps({'done': True, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+        done_payload: dict = {"done": True, "session_id": session_id}
+        if turn.progress_updated:
+            done_payload["progress_updated"] = turn.progress_updated
+        if turn.progress_removed:
+            done_payload["progress_removed"] = turn.progress_removed
+        if turn.pending_confirmation:
+            done_payload["pending_confirmation"] = turn.pending_confirmation
+        if turn.pending_action:
+            done_payload["pending_action"] = turn.pending_action
+        yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
         return
 
     # stream 結束後，把完整回應存進歷史
@@ -297,7 +369,16 @@ async def stream_generator(session_id: str, user_msg: str, settings: ChatSetting
         save_to_history(session_id, user_msg, full_reply, settings.max_history_turns)
 
     # 把 session_id 一起送給前端（前端第一次對話需要拿到這個值）
-    yield f"data: {json.dumps({'done': True, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+    done_payload = {"done": True, "session_id": session_id}
+    if turn.progress_updated:
+        done_payload["progress_updated"] = turn.progress_updated
+    if turn.progress_removed:
+        done_payload["progress_removed"] = turn.progress_removed
+    if turn.pending_confirmation:
+        done_payload["pending_confirmation"] = turn.pending_confirmation
+    if turn.pending_action:
+        done_payload["pending_action"] = turn.pending_action
+    yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
 
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
@@ -314,6 +395,7 @@ def clear_session(session_id: str):
     """清除指定 session 的對話歷史（前端「清除對話」按鈕用）"""
     if session_id in conversation_history:
         del conversation_history[session_id]
+    clear_pending_for_session(session_id)
     return {"status": "cleared", "session_id": session_id}
 
 @app.get("/session/{session_id}/history")

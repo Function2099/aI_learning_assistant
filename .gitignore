@@ -16,3 +16,6 @@ venv/
 .vscode/
 .idea/
 *.swp
+
+#other
+gitignore/

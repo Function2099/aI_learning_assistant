@@ -12,6 +12,47 @@
 - [x] 對話 Session 管理（多輪記憶、清除對話）
 - [x] LLM 參數可調（Temperature、Max tokens、歷史輪數、Top P）
 - [x] Groq token 上限自動裁切（避免超過 6000 token 請求失敗）
+- [x] 動態學習進度（對話記錄 + 兩段式確認）
+
+## 學習進度（Week 2）
+
+助手會依 [`learning_progress.json`](learning_progress.json) 中的白名單項目，在每次對話時將**伺服器生成的進度摘要**注入 System Prompt，讓建議符合你實際的學習位置。
+
+### 使用方式
+
+1. 在聊天中說出完成或記錄意圖，例如：
+   - `我 pytest 進度已經完成`（自然語句，會進入待確認）
+   - `幫我記錄進度：pytest 完成`（明確指令）
+2. 助手會列出待確認項目，泡泡下方出現橘色提示；請回覆 **`確認`** 或 **`取消`**
+3. 回覆「確認」後，進度才會寫入 `learning_progress.json`，並出現綠色「進度已更新」提示
+
+**移除進度**（改回未完成）：
+
+1. `幫我移除進度：pytest` 或 `pytest 其實還沒完成`
+2. 出現橘色「待確認移除」提示後，回覆 **`確認`**
+3. 出現紅色「進度已移除」提示，`learning_progress.json` 中該項目 `completed` 變回 `false`
+
+一般技術問答（例如「什麼是 LangChain」）**不會**觸發進度更新。助手**不會自行宣稱**已更新進度，必須等你回「確認」後系統才寫入。
+
+### 安全設計
+
+- **意圖閘門**：只有含「記錄進度」「幫我記」等關鍵詞的訊息才進入進度流程
+- **白名單**：只能更新 JSON 內預定義的項目 id
+- **兩段式確認**：先 pending 預覽，回「確認」才寫入
+- **Prompt 注入**：僅注入伺服器模板產生的摘要，使用者原文與 LLM 自由文字永不寫入 system prompt
+
+### 查看進度
+
+```bash
+curl http://localhost:8000/progress
+```
+
+### 執行測試
+
+```bash
+uv sync --extra dev
+uv run pytest tests/ -v
+```
 
 ## 快速啟動
 
@@ -56,6 +97,7 @@ uv run uvicorn main:app --reload
 | `/`       | 聊天介面            |
 | `/docs`   | API 文件（Swagger） |
 | `/health` | 健康檢查            |
+| `/progress` | 學習進度（唯讀）    |
 
 
 
@@ -64,7 +106,11 @@ uv run uvicorn main:app --reload
 
 ```
 aI_learning_assistant/
-├── main.py              # FastAPI 後端（API + 靜態檔案掛載）
+├── main.py                  # FastAPI 後端（API + 靜態檔案掛載）
+├── progress.py              # 學習進度邏輯（白名單、確認流程、Prompt 注入）
+├── learning_progress.json   # 學習進度資料（白名單項目）
+├── tests/
+│   └── test_progress.py     # 進度模組單元測試
 ├── frontend/
 │   ├── index.html       # 聊天 UI
 │   ├── app.js           # 串流對話、參數設定、Session 管理
@@ -83,6 +129,7 @@ aI_learning_assistant/
   ▼
 FastAPI (Python)          ← 前端靜態檔 + REST / SSE API
   │                         記憶體內 Session 對話歷史
+  │                         learning_progress.json 持久化進度
   ▼
 Groq API
 (qwen/qwen3-32b)
@@ -99,7 +146,8 @@ Groq API
 - **串流回覆**：透過 `/chat/stream`（SSE）逐字顯示，支援 Markdown 渲染
 - **側邊欄設定**：可調整 Temperature、Max tokens、歷史輪數、Top P，設定會存入 `localStorage`
 - **多輪對話**：自動帶入 `session_id`，後端保留對話歷史
-- **清除對話**：呼叫 `DELETE /session/{session_id}` 並重置畫面
+- **進度提示**：記錄進度時，泡泡下方顯示「待確認」或「已更新」提示
+- **清除對話**：呼叫 `DELETE /session/{session_id}` 並重置畫面（同時清除待確認進度）
 - **後端位址**：預設同源模式；也可手動指定其他 API 位址
 
 
@@ -107,6 +155,7 @@ Groq API
 ### 後端
 
 - **雙端點**：`POST /chat`（一次性回覆）、`POST /chat/stream`（串流）
+- **學習進度**：`GET /progress`（唯讀）；對話中透過兩段式確認寫入 JSON
 - **Token 預算**：依 Groq 免費方案單次 6000 token 上限，自動裁切歷史並調整 `max_tokens`
 - **推理隱藏**：使用 `reasoning_format: hidden`，過濾 qwen3 的 thinking 標籤
 - **錯誤處理**：token 超限時回傳友善中文提示
@@ -154,6 +203,12 @@ curl -X DELETE http://localhost:8000/session/{session_id}
 
 # 查看對話歷史（除錯用）
 curl http://localhost:8000/session/{session_id}/history
+```
+
+### 學習進度
+
+```bash
+curl http://localhost:8000/progress
 ```
 
 

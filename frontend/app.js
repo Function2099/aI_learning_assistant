@@ -180,6 +180,31 @@ function scrollToBottom() {
   chatEl.scrollTop = chatEl.scrollHeight;
 }
 
+function appendProgressHint(row, progressUpdated, pendingConfirmation, progressRemoved, pendingAction) {
+  if (progressUpdated?.length) {
+    const hint = document.createElement("p");
+    hint.className = "progress-hint progress-hint-updated";
+    hint.textContent = `進度已更新：${progressUpdated.join("、")}`;
+    row.appendChild(hint);
+  }
+  if (progressRemoved?.length) {
+    const hint = document.createElement("p");
+    hint.className = "progress-hint progress-hint-removed";
+    hint.textContent = `進度已移除：${progressRemoved.join("、")}`;
+    row.appendChild(hint);
+  }
+  if (pendingConfirmation?.length) {
+    const hint = document.createElement("p");
+    hint.className = "progress-hint progress-hint-pending";
+    const actionText =
+      pendingAction === "remove"
+        ? "待確認移除"
+        : "待確認";
+    hint.textContent = `${actionText}：${pendingConfirmation.join("、")}（回覆「確認」以寫入）`;
+    row.appendChild(hint);
+  }
+}
+
 function showTyping() {
   clearWelcome();
   const row = document.createElement("div");
@@ -243,6 +268,7 @@ async function sendMessage() {
 
     // 先建一個空泡泡，之後逐字填入
     const bubble = addMessage("assistant", "");
+    const bubbleRow = bubble.closest(".row");
     let fullText = "";
 
     const reader = res.body.getReader();
@@ -267,6 +293,14 @@ async function sendMessage() {
             }
             if (parsed.done) {
               currentSessionId = parsed.session_id;
+              appendProgressHint(
+                bubbleRow,
+                parsed.progress_updated,
+                parsed.pending_confirmation,
+                parsed.progress_removed,
+                parsed.pending_action
+              );
+              scrollToBottom();
               break;
             }
           }
